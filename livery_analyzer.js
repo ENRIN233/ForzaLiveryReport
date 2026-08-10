@@ -829,6 +829,18 @@ liveryItems.forEach(d => {
 	const strs = d.strings;
 	let title = strs.length > 0 ? strs[0].str : '';
 	d._title = (title === 'Forza BaseLivery' || title === 'Forza Livery' || title === 'Forza SoulBoundLivery') ? '' : title;
+	// 提取描述（中间字符串，过滤哨兵值）
+	let desc = '';
+	if (strs.length >= 3) {
+		const authorRaw = strs[strs.length - 1].str;
+		const middle = strs.slice(1, -1).filter(s =>
+			s.str !== 'Forza BaseLivery' && s.str !== 'Forza SoulBoundLivery' &&
+			s.str !== 'Forza Livery' && !s.str.includes('Livery') &&
+			s.str !== title && s.str !== authorRaw
+		);
+		if (middle.length > 0) desc = middle[0].str;
+	}
+	d._desc = desc;
 });
 
 // 通用分组函数
@@ -857,8 +869,14 @@ const groupsByTitle = groupDups(
 	d => `${d.parsed.code}|${d._title}`
 );
 
+// 轨道3: 车型 + 描述（中置信度，排除空描述）
+const groupsByDesc = groupDups(
+	liveryItems.filter(d => d._desc.length > 0),
+	d => `${d.parsed.code}|${d._desc}`
+);
+
 // 并查集合并重叠的组
-const allGroups = [...groupsByThumb, ...groupsByTitle];
+const allGroups = [...groupsByThumb, ...groupsByTitle, ...groupsByDesc];
 const dupSet = new Set();
 allGroups.forEach(g => g.forEach(d => dupSet.add(d)));
 
