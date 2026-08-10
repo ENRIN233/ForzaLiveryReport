@@ -1,0 +1,20 @@
+{
+  "name": "forzaliveryreport",
+  "version": "1.0.0",
+  "description": "Forza Horizon 6 涂装管理器",
+  "main": "livery_analyzer.js",
+  "bin": "livery_analyzer.js",
+  "scripts": {
+    "build": "pkg . --targets node18-win-x64 --output FH6涂装管理器.exe"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "pkg": {
+    "assets": []
+  },
+  "devDependencies": {
+    "pkg": "^5.8.1"
+  }
+}

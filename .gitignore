@@ -1,0 +1,20 @@
+# 生成输出
+report.html
+report_test.html
+*.html
+
+# 便携 Node.js 运行时
+node/
+
+# Claude Code
+.claude/
+
+# Node modules (不推荐用npm，但万一)
+node_modules/
+
+# pkg 编译产物
+*.exe
+
+# 系统文件
+Thumbs.db
+Desktop.ini
