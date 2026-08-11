@@ -820,8 +820,10 @@ items.forEach(item => {
 });
 
 // ===== 重复涂装检测 =====
-// 三轨并行: (1) 车型+缩略图大小容差 (2) 车型+标题 (3) 车型+描述
-// 任一维度命中 ≥2 → 判为重复，最后合并重叠组
+// 缩略图主导 + 标题/描述拆分：
+// (1) 同车型缩略图大小固定锚点聚类（0.5%容差，无链式放大）→ 候选组
+// (2) 组内按 title|description 二次分组 → 最终重复组
+// 作者不参与判定。
 
 // 提取缩略图大小和标题
 liveryItems.forEach(d => {
@@ -852,22 +854,10 @@ liveryItems.forEach(d => {
 	d._desc = desc;
 });
 
-// 通用分组函数（精确键匹配）
-function groupDups(items, keyFn) {
-	const map = new Map();
-	items.forEach(item => {
-		const key = keyFn(item);
-		if (!key) return;
-		if (!map.has(key)) map.set(key, []);
-		map.get(key).push(item);
-	});
-	const groups = [];
-	map.forEach(v => { if (v.length >= 2) groups.push(v); });
-	return groups;
-}
-
-// 容差分组函数（缩略图大小 — WebP 编码非确定性，同涂装可能差 ~200 bytes）
-function groupDupsBySize(items, tolerance) {
+// 固定锚点聚类：同车型内按缩略图大小排序，以最小文件为锚点，
+// 收集所有在 0.5% 容差内的项为一组，移除已分组项后重复。
+// 相比滑窗相邻比较，避免了 A-B-C-D-E 链式串组的问题。
+function clusterByThumbSize(items, tolerance) {
 	const byCode = new Map();
 	items.forEach(d => {
 		if (!byCode.has(d.parsed.code)) byCode.set(d.parsed.code, []);
@@ -877,72 +867,45 @@ function groupDupsBySize(items, tolerance) {
 	byCode.forEach((list, code) => {
 		if (list.length < 2) return;
 		list.sort((a, b) => a._thumbSize - b._thumbSize);
-		let cluster = [list[0]];
-		for (let i = 1; i < list.length; i++) {
-			const diff = list[i]._thumbSize - list[i - 1]._thumbSize;
-			const maxDiff = Math.max(list[i]._thumbSize, list[i - 1]._thumbSize) * tolerance;
-			if (diff <= maxDiff) {
-				cluster.push(list[i]);
-			} else {
-				if (cluster.length >= 2) groups.push(cluster);
-				cluster = [list[i]];
+		const used = new Set();
+		for (let i = 0; i < list.length; i++) {
+			if (used.has(i)) continue;
+			const cluster = [list[i]];
+			used.add(i);
+			const anchorSize = list[i]._thumbSize;
+			for (let j = i + 1; j < list.length; j++) {
+				if (used.has(j)) continue;
+				const diff = Math.abs(list[j]._thumbSize - anchorSize);
+				const maxDiff = Math.max(list[j]._thumbSize, anchorSize) * tolerance;
+				if (diff <= maxDiff) {
+					cluster.push(list[j]);
+					used.add(j);
+				}
 			}
+			if (cluster.length >= 2) groups.push(cluster);
 		}
-		if (cluster.length >= 2) groups.push(cluster);
 	});
 	return groups;
 }
 
-// 轨道1: 车型 + 缩略图大小（容差 0.5%，WebP 编码非确定性）
-const groupsByThumb = groupDupsBySize(
+// Step 1: 缩略图固定锚点聚类 → 候选组
+const candidateGroups = clusterByThumbSize(
 	liveryItems.filter(d => d._thumbSize > 0),
 	0.005  // 0.5% 容差: ~100KB 缩略图允许 +-512 bytes
 );
 
-// 轨道2: 车型 + 标题（中置信度）
-const groupsByTitle = groupDups(
-	liveryItems.filter(d => d._title.length > 0),
-	d => `${d.parsed.code}|${d._title}`
-);
-
-// 轨道3: 车型 + 描述（中置信度，排除空描述）
-const groupsByDesc = groupDups(
-	liveryItems.filter(d => d._desc.length > 0),
-	d => `${d.parsed.code}|${d._desc}`
-);
-
-// 并查集合并重叠的组
-const allGroups = [...groupsByThumb, ...groupsByTitle, ...groupsByDesc];
-const dupSet = new Set();
-allGroups.forEach(g => g.forEach(d => dupSet.add(d)));
-
-// 构建邻接图
-const adj = new Map();
-[...dupSet].forEach(d => adj.set(d, new Set()));
-allGroups.forEach(g => {
-	for (let i = 0; i < g.length; i++) {
-		for (let j = i + 1; j < g.length; j++) {
-			adj.get(g[i]).add(g[j]);
-			adj.get(g[j]).add(g[i]);
-		}
-	}
-});
-
-// BFS 连通分量 = 最终重复组
-const visited = new Set();
+// Step 2: 组内按 title|description 二次分组，拆开不同标题/描述的涂装
 const dupGroups = [];
-[...dupSet].forEach(start => {
-	if (visited.has(start)) return;
-	const comp = [], queue = [start];
-	visited.add(start);
-	while (queue.length > 0) {
-		const cur = queue.shift();
-		comp.push(cur);
-		(adj.get(cur) || new Set()).forEach(nb => {
-			if (!visited.has(nb)) { visited.add(nb); queue.push(nb); }
-		});
-	}
-	dupGroups.push(comp);
+candidateGroups.forEach(group => {
+	const keyMap = new Map();
+	group.forEach(d => {
+		const key = `${d._title}||${d._desc}`;
+		if (!keyMap.has(key)) keyMap.set(key, []);
+		keyMap.get(key).push(d);
+	});
+	keyMap.forEach(subGroup => {
+		if (subGroup.length >= 2) dupGroups.push(subGroup);
+	});
 });
 
 // 标记每个涂装所属重复组（1-based，0=无重复）
