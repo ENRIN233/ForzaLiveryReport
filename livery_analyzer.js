@@ -248,11 +248,13 @@ const CAR_NAME_MAP = {
   1277: "Plymouth Cuda 426 HEMI",
   1278: "Ford XB Falcon GT",
   1282: "Nissan 240SX",
+  1283: "Ford Thunderbird",
   1291: "El Camino Super Sport 454",
   1293: "Ford Sierra Cosworth RS500",
   1294: "GMC Syclone",
   1295: "037 Stradale",
   1296: "Mercedes-Benz 190 E 2.5-16 Evolution II",
+  1297: "Mitsubishi Starion ESI-R",
   1299: "Volvo 242 Turbo Evolution",
   1300: "Impala Super Sport 409",
   1301: "Jaguar D-Type",
@@ -309,6 +311,7 @@ const CAR_NAME_MAP = {
   1586: "Lincoln Continental",
   1587: "Mazda Cosmo 110S Series II",
   1591: "Peugeot 205 Turbo 16",
+  1592: "Toyota Celica GT",
   1598: "BMW M3 GTS",
   1599: "Ferrari 599XX Evolution",
   1601: "Lamborghini Gallardo LP570-4 Spyder Performante",
@@ -445,6 +448,7 @@ const CAR_NAME_MAP = {
   2822: "Nissan Safari Turbo",
   2825: "Lotus Elise GT1",
   2841: "Jeep Grand Cherokee Trackhawk",
+  2866: "Exocet Sport V8 XP-5",
   2870: "Honda Civic Type R",
   2871: "Maverick X RS Turbo R",
   2872: "Hyundai Veloster N",
@@ -519,6 +523,7 @@ const CAR_NAME_MAP = {
   3255: "Jeep JT",
   3257: "Nissan Pulsar GTI-R",
   3277: "Ford Mustang Shelby GT500",
+  3282: "#203 Porsche AG 961",
   3287: "Jaguar Sport XJR-15",
   3288: "Schuppan 962CR",
   3289: "Lamborghini Aventador SVJ",
@@ -556,6 +561,7 @@ const CAR_NAME_MAP = {
   3477: "Silverado LT Trail Boss",
   3482: "McLaren 765LT Coupé",
   3486: "Jeep Wrangler Rubicon Traffic",
+  3494: "Alfa Romeo Autodelta Tipo 33/2 Daytona",
   3498: "Saleen S7 LM",
   3518: "BMW M8 Competition Coupé",
   3520: "Lexus LC 500",
@@ -676,8 +682,10 @@ const CAR_NAME_MAP = {
   3928: "Hyundai i20 N",
   3929: "Nissan PAO",
   3933: "Toyota Chaser 2.5 Tourer V",
+  3937: "Honda N600",
   3950: "Ferrari 275 GTB4 Spider",
   3953: "Porsche 911 Turbo S",
+  3954: "Chevrolet Camaro ZL1",
   3955: "RAM 1500 TRX",
   3959: "Dodge Challenger SRT Super Stock",
   3960: "SUBARU Vivio RX-R",
@@ -737,6 +745,7 @@ const CAR_NAME_MAP = {
   4231: "#52 Evasive Motorsports S2000 WTAC",
   4232: "Porsche Cayman GT3 WTAC",
   4234: "Honda Civic Type R",
+  4238: "Nissan Skyline 2000 Turbo RS",
   4250: "Toyota Sprinter Trueno GT Apex 'Touge Edition'",
   4251: "Honda S2000 'Touge Edition'",
   4252: "SUBARU Impreza 22B-STi Version 'Touge Edition'",
@@ -934,16 +943,20 @@ liveryItems.sort((a, b) => {
 // ===== 构建 HTML 行 =====
 
 let rowsHtml = '';
+let rowIdx = 0;
 
 liveryItems.forEach(d => {
     const p = d.parsed;
     const strs = d.strings;
+    const curIdx = rowIdx++;
 
-    let title = strs.length > 0 ? strs[0].str : '';
-    let desc = '';
-    let author = '';
+    let title = '', desc = '', author = '';
 
-    if (strs.length >= 2) {
+    if (strs.length === 1) {
+        // 只有一个字符串 = 作者名（没有自定义标题时游戏只存作者）
+        author = strs[0].str;
+    } else if (strs.length >= 2) {
+        title = strs[0].str;
         author = strs[strs.length - 1].str;
         if (strs.length >= 3) {
             const nonTitleNonAuthor = strs.slice(1, -1).filter(s =>
@@ -970,13 +983,14 @@ liveryItems.forEach(d => {
     const thumbBase64 = getThumbnailBase64(d.fullPath);
     let thumbCell;
     if (thumbBase64) {
-        thumbCell = `<img class="thumb-img" src="data:image/webp;base64,${thumbBase64}" alt="${escapeHtml(cleanTitle || '缩略图')}">`;
+        thumbCell = `<img class="thumb-img" src="data:image/webp;base64,${thumbBase64}" alt="${escapeHtml(cleanTitle || '缩略图')}" onclick="openLightbox(this)">`;
     } else {
         thumbCell = `<div class="no-thumb">无</div>`;
     }
 
-    rowsHtml += `<tr class="${d._dupGroup > 0 ? 'dup-row dup-group-' + d._dupGroup : ''}" data-dup-group="${d._dupGroup}" data-sort-date="${escapeHtml(p.ts)}" data-sort-car="${escapeHtml(carName)}" data-sort-author="${escapeHtml(cleanAuthor)}">
+    rowsHtml += `<tr class="${d._dupGroup > 0 ? 'dup-row dup-group-' + d._dupGroup : ''}" data-dup-group="${d._dupGroup}" data-sort-default="${curIdx}" data-sort-date="${escapeHtml(p.ts)}" data-sort-car="${escapeHtml(carName)}" data-sort-author="${escapeHtml(cleanAuthor)}">
         <td class="col-date">${escapeHtml(formatTimestamp(p.ts))}</td>
+        <td class="col-grid">${Math.floor(curIdx / 2) + 1}列${(curIdx % 2) + 1}个</td>
         <td class="col-car">${escapeHtml(carName)}</td>
         <td class="col-title">${escapeHtml(cleanTitle)}</td>
         <td class="col-desc">${escapeHtml(desc)}</td>
@@ -1088,6 +1102,7 @@ td {
 tr:nth-child(even) { background: #f8f9fc; }
 tr:hover { background: #e3f0fa; }
 .col-date { white-space: nowrap; font-family: "SF Mono", "Cascadia Code", Consolas, monospace; font-size: 12px; }
+.col-grid { white-space: nowrap; font-family: "SF Mono", "Cascadia Code", Consolas, monospace; font-size: 12px; text-align: center; color: #555; }
 .col-car { font-weight: 600; color: #1a1a2e; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .col-title { max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .col-desc { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #666; }
@@ -1132,9 +1147,10 @@ tr:hover { background: #e3f0fa; }
 
 <div class="sort-row">
     <span style="font-size:13px;color:#555;">排序：</span>
-    <button id="btn-sort-date" class="active" onclick="sortTable(0,'string',this)">日期 ▲</button>
-    <button id="btn-sort-car" onclick="sortTable(1,'string',this)">车型</button>
-    <button id="btn-sort-author" onclick="sortTable(4,'string',this)">作者</button>
+    <button id="btn-sort-default" class="active" onclick="sortTable(1,'number',this)">默认 ▲</button>
+    <button id="btn-sort-date" onclick="sortTable(0,'string',this)">日期</button>
+    <button id="btn-sort-car" onclick="sortTable(2,'string',this)">车型</button>
+    <button id="btn-sort-author" onclick="sortTable(5,'string',this)">作者</button>
     <span style="margin-left:12px;font-size:13px;color:#555;">筛选：</span>
     <button id="btn-dup-filter" onclick="toggleDupFilter(this)">仅重复</button>
 </div>
@@ -1148,6 +1164,7 @@ tr:hover { background: #e3f0fa; }
 <thead>
 <tr>
     <th>创建日期</th>
+    <th>游戏内位置</th>
     <th>车型</th>
     <th>涂装标题</th>
     <th>描述</th>
@@ -1167,7 +1184,7 @@ ${rowsHtml}
 </div>
 
 <script>
-var currentSort = {col: 0, asc: true};
+var currentSort = {col: 1, asc: true};
 var dupFilterActive = false;
 
 function sortTable(colIndex, dataType, btn) {
@@ -1183,13 +1200,19 @@ function sortTable(colIndex, dataType, btn) {
     var tbody = table.querySelector('tbody');
     var rows = Array.from(tbody.querySelectorAll('tr'));
 
-    var attrs = ['data-sort-date','data-sort-car','data-sort-car','data-sort-car','data-sort-author'];
+    // col: 0=date, 1=default, 2-4=car, 5=author
+    var attrs = ['data-sort-date','data-sort-default','data-sort-car','data-sort-car','data-sort-car','data-sort-author'];
     var attr = attrs[colIndex];
 
     rows.sort(function(a, b) {
         var va = a.getAttribute(attr) || '';
         var vb = b.getAttribute(attr) || '';
-        var cmp = va.localeCompare(vb, 'zh-CN');
+        var cmp;
+        if (dataType === 'number') {
+            cmp = parseInt(va) - parseInt(vb);
+        } else {
+            cmp = va.localeCompare(vb, 'zh-CN');
+        }
         // secondary sort by date when primary keys equal
         if (cmp === 0 && colIndex !== 0) {
             var da = a.getAttribute('data-sort-date') || '';
@@ -1204,12 +1227,9 @@ function sortTable(colIndex, dataType, btn) {
     }
 
     // Update buttons
-    var btnLabels = ['日期','车型','作者'];
-    var btnIds = ['btn-sort-date','btn-sort-car','btn-sort-author'];
-    var btnIdx = [0,1,1,1,4].indexOf(colIndex);
-    if (btnIdx >= 0 && btnIdx < btnIds.length) btnIdx = btnIdx === 3 ? 2 : btnIdx; // col 4 -> btnIdx 2
-    // simplify: map colIndex to btn index
-    var bi = colIndex === 0 ? 0 : colIndex <= 2 ? 1 : 2;
+    var btnLabels = ['日期','默认','车型','作者'];
+    var btnIds = ['btn-sort-date','btn-sort-default','btn-sort-car','btn-sort-author'];
+    var bi = colIndex === 0 ? 0 : colIndex === 1 ? 1 : colIndex <= 4 ? 2 : 3;
     document.querySelectorAll('.sort-row button').forEach(function(b){b.classList.remove('active');});
     var activeBtn = document.getElementById(btnIds[bi]);
     if (activeBtn) {
@@ -1238,9 +1258,9 @@ function openLightbox(img){var lb=document.getElementById("lightbox");document.g
     var table = document.getElementById('report-table');
     var tr = table.querySelectorAll('tbody tr');
     for (var i = 0; i < tr.length; i++) {
-        var car = tr[i].cells[1].textContent.toLowerCase();
-        var title = tr[i].cells[2].textContent.toLowerCase();
-        var author = tr[i].cells[4].textContent.toLowerCase();
+        var car = tr[i].cells[2].textContent.toLowerCase();
+        var title = tr[i].cells[3].textContent.toLowerCase();
+        var author = tr[i].cells[5].textContent.toLowerCase();
         var matchesSearch = car.indexOf(filter) > -1 || title.indexOf(filter) > -1 || author.indexOf(filter) > -1;
         var isDup = tr[i].getAttribute('data-dup-group') !== '0';
         if (matchesSearch && (!dupFilterActive || isDup)) {
