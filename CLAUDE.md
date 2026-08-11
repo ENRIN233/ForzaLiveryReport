@@ -48,9 +48,13 @@ ForzaLiveryReport/
 Runs after livery scan, before HTML generation. **Three-track parallel grouping → adjacency graph → BFS connected components:**
 
 ```
-Track 1: carCode + thumbnailFileSize   → high confidence (thumbSize > 0)
-Track 2: carCode + title               → medium confidence (title non-empty)
-Track 3: carCode + description         → medium confidence (desc non-empty)
+Track 1: carCode + thumbnailFileSize (0.5% tolerance) → WebP encoding non-deterministic
+Track 2: carCode + title                              → medium confidence
+Track 3: carCode + description                        → medium confidence
+
+Track 1 uses a tolerance-based clustering (group by car code → sort by size → sliding window
+with 0.5% relative threshold) because WebP compression produces slightly different byte counts
+(20-200 bytes) for identical liveries. Exact byte comparison would yield zero hits.
 
 Tracks 2 & 3 skip items where both title and description are empty.
 Each track independently produces groups of ≥2 items.

@@ -820,7 +820,7 @@ items.forEach(item => {
 });
 
 // ===== 重复涂装检测 =====
-// 双轨并行: (1) 车型+缩略图大小 (2) 车型+标题
+// 三轨并行: (1) 车型+缩略图大小容差 (2) 车型+标题 (3) 车型+描述
 // 任一维度命中 ≥2 → 判为重复，最后合并重叠组
 
 // 提取缩略图大小和标题
@@ -852,7 +852,7 @@ liveryItems.forEach(d => {
 	d._desc = desc;
 });
 
-// 通用分组函数
+// 通用分组函数（精确键匹配）
 function groupDups(items, keyFn) {
 	const map = new Map();
 	items.forEach(item => {
@@ -866,10 +866,37 @@ function groupDups(items, keyFn) {
 	return groups;
 }
 
-// 轨道1: 车型 + 缩略图大小（高置信度）
-const groupsByThumb = groupDups(
+// 容差分组函数（缩略图大小 — WebP 编码非确定性，同涂装可能差 ~200 bytes）
+function groupDupsBySize(items, tolerance) {
+	const byCode = new Map();
+	items.forEach(d => {
+		if (!byCode.has(d.parsed.code)) byCode.set(d.parsed.code, []);
+		byCode.get(d.parsed.code).push(d);
+	});
+	const groups = [];
+	byCode.forEach((list, code) => {
+		if (list.length < 2) return;
+		list.sort((a, b) => a._thumbSize - b._thumbSize);
+		let cluster = [list[0]];
+		for (let i = 1; i < list.length; i++) {
+			const diff = list[i]._thumbSize - list[i - 1]._thumbSize;
+			const maxDiff = Math.max(list[i]._thumbSize, list[i - 1]._thumbSize) * tolerance;
+			if (diff <= maxDiff) {
+				cluster.push(list[i]);
+			} else {
+				if (cluster.length >= 2) groups.push(cluster);
+				cluster = [list[i]];
+			}
+		}
+		if (cluster.length >= 2) groups.push(cluster);
+	});
+	return groups;
+}
+
+// 轨道1: 车型 + 缩略图大小（容差 0.5%，WebP 编码非确定性）
+const groupsByThumb = groupDupsBySize(
 	liveryItems.filter(d => d._thumbSize > 0),
-	d => `${d.parsed.code}|${d._thumbSize}`
+	0.005  // 0.5% 容差: ~100KB 缩略图允许 +-512 bytes
 );
 
 // 轨道2: 车型 + 标题（中置信度）
