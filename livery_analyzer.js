@@ -852,6 +852,14 @@ liveryItems.forEach(d => {
 		if (middle.length > 0) desc = middle[0].str;
 	}
 	d._desc = desc;
+	// 提取作者（最后一个字符串，过滤哨兵值）
+	let author = '';
+	if (strs.length === 1) {
+		author = strs[0].str;
+	} else if (strs.length >= 2) {
+		author = strs[strs.length - 1].str;
+	}
+	d._author = (author === 'Forza BaseLivery' || author === 'Forza Livery' || author === 'Forza SoulBoundLivery') ? '' : author;
 });
 
 // 固定锚点聚类：同车型内按缩略图大小排序，以最小文件为锚点，
@@ -899,7 +907,7 @@ const dupGroups = [];
 candidateGroups.forEach(group => {
 	const keyMap = new Map();
 	group.forEach(d => {
-		const key = `${d._title}||${d._desc}`;
+		const key = `${d._title}||${d._desc}||${d._author}`;
 		if (!keyMap.has(key)) keyMap.set(key, []);
 		keyMap.get(key).push(d);
 	});
