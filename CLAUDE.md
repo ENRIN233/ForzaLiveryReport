@@ -85,10 +85,12 @@ Final groups assigned 1-based IDs; non-duplicates get ID 0.
   - `MM`: ~170 code→brand manual mappings for cases where brand can't be inferred from ModelShort (model-name-first MS like `"Corvette '67"`, dot-abbreviations like `"L. Countach '21"`, race cars like `"#5 Escort '77"`).
 - **ModelShort index**: ModelShort strings follow DisplayName strings in VALUES section. Use dynamic `+dsCount` (actual DisplayName count), never hardcode `+651` — it changes when the game adds cars.
 - **Year suffix from ModelShort**: `apply_all.js` extracts the year from ModelShort's trailing `'XX` pattern (e.g. `"BMW M3 '97"` → `'97`). This is Forza's internal year delimiter and is highly reliable — ~250/660 cars have it. Cars without `'XX` in ModelShort (e.g. `"Ferrari F40"`) get no year suffix. The year is appended to the display name as-is (`'97`, `'08`, etc.). For cars with the same display name but different codes (e.g. 7 Honda Civic Type R variants), the year suffix naturally distinguishes them — all but 1 group (GR GT Prototype) are resolved.
-- **Title/description/author extraction from `header`**: UTF-16LE ASCII strings extracted by `extractStrings()`. Logic:
-  - `strs.length === 1` → single string is the **author** (gamertag), no custom title
-  - `strs.length >= 2` → first = title, last = author, middle (after filtering "Forza Livery" sentinels) = description
-  - "Forza BaseLivery"/"Forza Livery"/"Forza SoulBoundLivery" strings are cleaned from title and author
+- **Title/description/author extraction from `header`**: `header` is a ForzaTech binary container; strings are stored as **u32 length prefix + UTF-16LE code units** (NOT null-terminated ASCII). `parseHeader()` decodes three fields:
+  - **Title** — u32 length at byte offset 4, chars at offset 8. Every livery has a title field; the game writes the `"Forza Livery"` sentinel when there is no custom title.
+  - **Description** — u32 length immediately following the title chars (length 0 = no description).
+  - **Author** — located in the trailing binary area via anchor `u16 == 9`, then u32 length, then `len` UTF-16 units that are all "plausible text" (`isTextUnit` = ASCII/Latin/CJK flags/kana/Hangul ranges). Empirically verified on the whole save (found on 115/115 headers).
+  - Sentinel cleaning: exact `"Forza BaseLivery"` / `"Forza Livery"` / `"Forza SoulBoundLivery"` are blanked from title/author; a description equal to the title/author or a sentinel is blanked.
+  - The previous `extractStrings()` (scan for high-byte-zero ASCII runs) was replaced: it dropped non-ASCII (Chinese/Japanese) titles & descriptions (each multi-byte char has a non-zero high byte, terminating the scan) and could bleed the next length-prefix byte into a string's tail (e.g. `"Hatsune Miku%"`, `"AMIYA "`).
 - **`apply_all.js` idempotency guards**:
   - Step 1: `existingCount !== dsCount` (entry count changed) **OR** missing `'XX` year pattern **OR** missing brand fix marker (`Porsche 911 Rallye`) — regenerates CAR_NAME_MAP. The three-condition gate catches both new cars being added and structural improvements to the map generation logic.
   - Step 2 (lightbox): `!la.includes('onclick="openLightbox(this)"')` — guards thumbnail onclick injection; CSS/div/JS are nested inside `!la.includes('id="lightbox"')`

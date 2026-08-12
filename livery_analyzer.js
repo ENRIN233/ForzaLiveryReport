@@ -30,25 +30,72 @@ function autoDetectBaseDir() {
 let BASE_DIR = process.argv[2] || autoDetectBaseDir() || '';
 const OUTPUT_FILE = process.argv[3] || path.resolve(__dirname, 'report.html');
 
-/** 从 header 文件中提取所有 UTF-16LE 字符串 */
-function extractStrings(headerPath) {
+/** 读取 UTF-16LE 字符串（从 startByte 起连续 count 个码元） */
+function readUTF16(buf, startByte, count) {
+    let s = '';
+    for (let k = 0; k < count; k++) {
+        const p = startByte + k * 2;
+        if (p + 1 >= buf.length) break;
+        s += String.fromCharCode(buf[p] | (buf[p + 1] << 8));
+    }
+    return s;
+}
+
+/** 判断 UTF-16 码元是否属于"可显示文本"（用于在二进制区域中定位作者串） */
+function isTextUnit(u) {
+    return (u >= 0x20 && u <= 0x7e) ||    // ASCII 可打印
+           (u >= 0xa0 && u <= 0x24f) ||   // Latin-1 补充 + 拉丁扩展-A/B
+           (u >= 0x2b0 && u <= 0x36f) ||  // 修饰符 + 组合音标
+           (u >= 0x370 && u <= 0x52f) ||  // 希腊文 + 西里尔文
+           (u >= 0x1e00 && u <= 0x1fff) ||
+           (u >= 0x2c60 && u <= 0x2c7f) ||
+           (u >= 0x2e80 && u <= 0xa4cf) || // CJK 部首/汉字/假名/谚文注音...
+           (u >= 0xac00 && u <= 0xd7af) || // 谚文音节
+           (u >= 0xf900 && u <= 0xfaff) || // CJK 兼容汉字
+           (u >= 0xfe30 && u <= 0xfe4f) ||
+           (u >= 0xff00 && u <= 0xffef);   // 全角字符
+}
+
+/**
+ * 解析 header 文件 → { title, desc, author }
+ * header 是 Forza 二进制容器：标题/描述以「u32 长度 + UTF-16LE」紧随文件头存储，
+ * 作者串位于后续二进制区（u16=9 锚点 + u32 长度 + 一段可显示文本）。
+ * 相比旧版"仅扫描 ASCII 段"的做法，可正确还原中文/日文等多字节标题与描述。
+ */
+function parseHeader(headerPath) {
     try {
         const h = fs.readFileSync(headerPath);
-        const strings = [];
-        for (let i = 0; i < h.length - 1; i += 2) {
-            if (i + 1 < h.length && h[i + 1] === 0 && h[i] >= 32 && h[i] < 127) {
-                let s = '';
-                let j = i;
-                while (j < h.length - 1 && h[j + 1] === 0 && h[j] >= 32 && h[j] < 127) {
-                    s += String.fromCharCode(h[j]);
-                    j += 2;
-                }
-                if (s.length >= 3) strings.push({ str: s, offset: i });
-                i = j - 2;
+        if (h.length < 8) return { title: '', desc: '', author: '' };
+        // 标题：文件头偏移 4 处为 u32 长度前缀
+        const titleLen = h.readUInt32LE(4);
+        if (titleLen > 200 || 8 + titleLen * 2 > h.length) {
+            return { title: '', desc: '', author: '' };
+        }
+        const title = readUTF16(h, 8, titleLen);
+        // 描述：紧跟标题的 u32 长度前缀（可为 0，表示无描述）
+        let desc = '';
+        let cursor = 8 + titleLen * 2;
+        if (cursor + 4 <= h.length) {
+            const descLen = h.readUInt32LE(cursor);
+            if (descLen >= 0 && descLen <= 200 && cursor + 4 + descLen * 2 <= h.length) {
+                desc = readUTF16(h, cursor + 4, descLen);
+                cursor += 4 + descLen * 2;
             }
         }
-        return strings;
-    } catch { return []; }
+        // 作者：在二进制区查找「u16=9 + u32 长度 + 全部可显示文本」的结构
+        let author = '';
+        for (let i = cursor; i + 6 <= h.length; i++) {
+            if (h[i] !== 9 || h[i + 1] !== 0) continue;
+            const len = h.readUInt32LE(i + 2);
+            if (len < 1 || len > 100 || i + 6 + len * 2 > h.length) continue;
+            let ok = true;
+            for (let k = 0; k < len; k++) {
+                if (!isTextUnit(h[i + 6 + k * 2] | (h[i + 6 + k * 2 + 1] << 8))) { ok = false; break; }
+            }
+            if (ok) { author = readUTF16(h, i + 6, len); break; }
+        }
+        return { title, desc, author };
+    } catch { return { title: '', desc: '', author: '' }; }
 }
 
 /** 解析目录名 */
@@ -805,16 +852,21 @@ items.forEach(item => {
     const files = fs.readdirSync(fullPath);
     const hasHeader = files.includes('header');
 
-    let strings = [];
+    let title = '', desc = '', author = '';
     if (hasHeader) {
-        strings = extractStrings(path.join(fullPath, 'header'));
+        const ph = parseHeader(path.join(fullPath, 'header'));
+        title = ph.title;
+        desc = ph.desc;
+        author = ph.author;
     }
 
     liveryItems.push({
         name: item.name,
         parsed,
         fullPath,
-        strings,
+        title,
+        desc,
+        author,
         hasThumb: files.includes('bigThumb.webp') || files.includes('thumb.webp')
     });
 });
@@ -837,29 +889,12 @@ liveryItems.forEach(d => {
 		}
 	} catch {}
 	d._thumbSize = thumbSize;
-	const strs = d.strings;
-	let title = strs.length > 0 ? strs[0].str : '';
-	d._title = (title === 'Forza BaseLivery' || title === 'Forza Livery' || title === 'Forza SoulBoundLivery') ? '' : title;
-	// 提取描述（中间字符串，过滤哨兵值）
-	let desc = '';
-	if (strs.length >= 3) {
-		const authorRaw = strs[strs.length - 1].str;
-		const middle = strs.slice(1, -1).filter(s =>
-			s.str !== 'Forza BaseLivery' && s.str !== 'Forza SoulBoundLivery' &&
-			s.str !== 'Forza Livery' && !s.str.includes('Livery') &&
-			s.str !== title && s.str !== authorRaw
-		);
-		if (middle.length > 0) desc = middle[0].str;
-	}
-	d._desc = desc;
-	// 提取作者（最后一个字符串，过滤哨兵值）
-	let author = '';
-	if (strs.length === 1) {
-		author = strs[0].str;
-	} else if (strs.length >= 2) {
-		author = strs[strs.length - 1].str;
-	}
-	d._author = (author === 'Forza BaseLivery' || author === 'Forza Livery' || author === 'Forza SoulBoundLivery') ? '' : author;
+	// 标题/描述/作者已在扫描阶段精确解析（支持中文等多字节字符）
+	const isSentinel = s => s === 'Forza BaseLivery' || s === 'Forza Livery' || s === 'Forza SoulBoundLivery';
+	d._title = isSentinel(d.title) ? '' : d.title;
+	d._author = isSentinel(d.author) ? '' : d.author;
+	// 描述：哨兵值或与标题/作者重复时不显示
+	d._desc = (isSentinel(d.desc) || d.desc === d.title || d.desc === d.author) ? '' : d.desc;
 });
 
 // 固定锚点聚类：同车型内按缩略图大小排序，以最小文件为锚点，
@@ -953,34 +988,14 @@ let rowIdx = 0;
 
 liveryItems.forEach(d => {
     const p = d.parsed;
-    const strs = d.strings;
     const curIdx = rowIdx++;
 
-    let title = '', desc = '', author = '';
-
-    if (strs.length === 1) {
-        // 只有一个字符串 = 作者名（没有自定义标题时游戏只存作者）
-        author = strs[0].str;
-    } else if (strs.length >= 2) {
-        title = strs[0].str;
-        author = strs[strs.length - 1].str;
-        if (strs.length >= 3) {
-            const nonTitleNonAuthor = strs.slice(1, -1).filter(s =>
-                s.str !== 'Forza BaseLivery' &&
-                s.str !== 'Forza SoulBoundLivery' &&
-                s.str !== 'Forza Livery' &&
-                !s.str.includes('Livery') &&
-                s.str !== title &&
-                s.str !== author
-            );
-            if (nonTitleNonAuthor.length > 0) {
-                desc = nonTitleNonAuthor[0].str;
-            }
-        }
-    }
-
-    const cleanTitle = (title === 'Forza BaseLivery' || title === 'Forza Livery' || title === 'Forza SoulBoundLivery') ? '' : title;
-    const cleanAuthor = (author === 'Forza BaseLivery' || author === 'Forza Livery' || author === 'Forza SoulBoundLivery') ? '' : author;
+    // 标题/描述/作者已在扫描与重复检测阶段解析并清洗（支持中文等非 ASCII 文本）
+    const title = d._title;
+    const desc = d._desc;
+    const author = d._author;
+    const cleanTitle = title;
+    const cleanAuthor = author;
 
     // 查车型名
     const codeNum = parseInt(p.code);

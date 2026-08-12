@@ -8,6 +8,7 @@ node/
 
 # Claude Code
 .claude/
+memory/
 
 # Node modules (不推荐用npm，但万一)
 node_modules/
