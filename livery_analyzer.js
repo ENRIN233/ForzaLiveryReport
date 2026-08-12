@@ -872,10 +872,11 @@ items.forEach(item => {
 });
 
 // ===== 重复涂装检测 =====
-// 缩略图主导 + 标题/描述拆分：
-// (1) 同车型缩略图大小固定锚点聚类（0.5%容差，无链式放大）→ 候选组
-// (2) 组内按 title|description 二次分组 → 最终重复组
-// 作者不参与判定。
+// 双路径并行，最终取并集：
+//   路径 A（缩略图）：同车型缩略图大小固定锚点聚类（0.5%容差）→ 组内 title||desc||author 拆分
+//   路径 B（文本）  ：同车型 + 同作者 → 桶内标题/描述匹配
+//     匹配规则：标题必须相同；若双方描述均非空则描述也须相同；
+//     任意一方描述为空时仅标题匹配即可判定为重复。
 
 // 提取缩略图大小和标题
 liveryItems.forEach(d => {
@@ -932,14 +933,15 @@ function clusterByThumbSize(items, tolerance) {
 	return groups;
 }
 
-// Step 1: 缩略图固定锚点聚类 → 候选组
+// ===== 路径 A：缩略图检测 =====
+// Step A1: 缩略图固定锚点聚类 → 候选组
 const candidateGroups = clusterByThumbSize(
 	liveryItems.filter(d => d._thumbSize > 0),
 	0.005  // 0.5% 容差: ~100KB 缩略图允许 +-512 bytes
 );
 
-// Step 2: 组内按 title|description 二次分组，拆开不同标题/描述的涂装
-const dupGroups = [];
+// Step A2: 组内按 title||desc||author 二次分组，拆开不同文本的涂装
+const thumbDupGroups = [];
 candidateGroups.forEach(group => {
 	const keyMap = new Map();
 	group.forEach(d => {
@@ -948,8 +950,71 @@ candidateGroups.forEach(group => {
 		keyMap.get(key).push(d);
 	});
 	keyMap.forEach(subGroup => {
-		if (subGroup.length >= 2) dupGroups.push(subGroup);
+		if (subGroup.length >= 2) thumbDupGroups.push(subGroup);
 	});
+});
+
+// ===== 路径 B：文本检测（同车型 + 同作者 + 标题/描述匹配）=====
+// 桶内匹配规则：标题必须相同；若双方描述均非空则描述也须相同；
+// 任意一方描述为空时仅标题匹配即可判定为重复。
+const textBuckets = new Map();
+liveryItems.forEach(d => {
+	if (!d._author) return;
+	const key = d.parsed.code + '|||' + d._author;
+	if (!textBuckets.has(key)) textBuckets.set(key, []);
+	textBuckets.get(key).push(d);
+});
+
+const textDupGroups = [];
+textBuckets.forEach(bucket => {
+	if (bucket.length < 2) return;
+	const bn = bucket.length;
+	const bParent = Array.from({length: bn}, (_, i) => i);
+	const bFind = x => { while (bParent[x] !== x) { bParent[x] = bParent[bParent[x]]; x = bParent[x]; } return x; };
+	const bUnion = (x, y) => { bParent[bFind(x)] = bFind(y); };
+
+	for (let i = 0; i < bn; i++) {
+		for (let j = i + 1; j < bn; j++) {
+			const a = bucket[i], b = bucket[j];
+			if (a._title !== b._title) continue;
+			const aNoDesc = !a._desc, bNoDesc = !b._desc;
+			if (aNoDesc || bNoDesc || a._desc === b._desc) bUnion(i, j);
+		}
+	}
+
+	const rootMap = new Map();
+	bucket.forEach((d, i) => {
+		const r = bFind(i);
+		if (!rootMap.has(r)) rootMap.set(r, []);
+		rootMap.get(r).push(d);
+	});
+	rootMap.forEach(group => {
+		if (group.length >= 2) textDupGroups.push(group);
+	});
+});
+
+// ===== 合并两条路径（并查集取并集）=====
+const nAll = liveryItems.length;
+const mParent = Array.from({length: nAll}, (_, i) => i);
+const mFind = x => { while (mParent[x] !== x) { mParent[x] = mParent[mParent[x]]; x = mParent[x]; } return x; };
+const mUnion = (x, y) => { mParent[mFind(x)] = mFind(y); };
+
+thumbDupGroups.forEach(group => {
+	for (let i = 1; i < group.length; i++) mUnion(liveryItems.indexOf(group[0]), liveryItems.indexOf(group[i]));
+});
+textDupGroups.forEach(group => {
+	for (let i = 1; i < group.length; i++) mUnion(liveryItems.indexOf(group[0]), liveryItems.indexOf(group[i]));
+});
+
+const finalRootMap = new Map();
+liveryItems.forEach((d, i) => {
+	const r = mFind(i);
+	if (!finalRootMap.has(r)) finalRootMap.set(r, []);
+	finalRootMap.get(r).push(d);
+});
+const dupGroups = [];
+finalRootMap.forEach(group => {
+	if (group.length >= 2) dupGroups.push(group);
 });
 
 // 标记每个涂装所属重复组（1-based，0=无重复）
@@ -962,7 +1027,7 @@ liveryItems.forEach(d => {
 });
 
 const dupFileCount = dupGroups.reduce((s, g) => s + g.length, 0);
-console.log(`重复检测: ${dupGroups.length} 组重复, 涉及 ${dupFileCount} 个涂装文件`);
+console.log(`重复检测: ${dupGroups.length} 组重复, 涉及 ${dupFileCount} 个涂装文件 (缩略图 ${thumbDupGroups.length} 组 + 文本 ${textDupGroups.length} 组)`);
 
 // 计算每车型唯一涂装数（重复组算1种）
 const carUniqueSets = new Map();
