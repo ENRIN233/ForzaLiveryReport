@@ -890,8 +890,9 @@ liveryItems.forEach(d => {
 	} catch {}
 	d._thumbSize = thumbSize;
 	// 标题/描述/作者已在扫描阶段精确解析（支持中文等多字节字符）
+	// 标题原样显示：游戏默认标题 "Forza Livery"（未起名）也保留
 	const isSentinel = s => s === 'Forza BaseLivery' || s === 'Forza Livery' || s === 'Forza SoulBoundLivery';
-	d._title = isSentinel(d.title) ? '' : d.title;
+	d._title = (d.title === 'Forza BaseLivery' || d.title === 'Forza SoulBoundLivery') ? '' : d.title;
 	d._author = isSentinel(d.author) ? '' : d.author;
 	// 描述：哨兵值或与标题/作者重复时不显示
 	d._desc = (isSentinel(d.desc) || d.desc === d.title || d.desc === d.author) ? '' : d.desc;
