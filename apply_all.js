@@ -76,5 +76,9 @@ if(!la.includes('data-car-unique')){
   m=true;
 } else {console.log('Single/multi livery filter OK.');}
 
+// === Step 5: Version variant detection (check only) ===
+if(la.includes('data-variant-group')){console.log('Version variant detection OK.');}
+else{console.log('Version variant detection MISSING — update livery_analyzer.js from source.');m=true;}
+
 if(m){fs.writeFileSync('livery_analyzer.js',la);console.log('HTML patches applied.');}
 else{console.log('HTML patches already applied.');}

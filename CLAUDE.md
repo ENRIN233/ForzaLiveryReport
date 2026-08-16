@@ -69,6 +69,32 @@ Key details:
 - Items with all-empty title + desc + author share key `"||||"` and will match each other in Path A; they're excluded from Path B (empty author).
 - Final groups assigned 1-based IDs via `_dupGroup`; non-duplicates get ID 0.
 
+## Version Variant Detection Algorithm
+
+**Parallel to duplicate detection, independent (non-crossing) marking.** A livery can belong to both a dup group and a variant group simultaneously.
+
+```
+normalizeVersion(title) strips version tokens:
+  - v/V/ver/ver./version + digits (v2, V2, ver2, version2, V.3)
+  - final/FINAL/rev + digits (final2, FINAL2, rev1)
+  - decimal versions \d+\.\d+ (3.0, 2.0, 1.5)
+  → collapse whitespace, trim. Does NOT match trailing bare digits (high false-positive risk).
+
+Grouping:
+  bucket = carCode + '|' + author (author empty → skip)
+  → sub-group by normalizeVersion(title) (base title)
+  → sub-group ≥2 items AND ≥2 distinct raw titles → variant group
+     (the distinct-titles gate excludes exact duplicates from variant groups)
+
+Row attribute: data-variant-group (1-based, 0=none), parallel to data-dup-group.
+```
+
+Key details:
+- Version token can be mid-title (`miku V2 lim` → `miku lim`); whitespace collapse handles it.
+- Bare `v`+digit regex theoretically strips engine designations (V8/V12), but empirically zero such titles exist in livery titles (300 scanned) — all `v`+digit matches are real versions. Documented as latent risk.
+- Variant groups are NOT visually highlighted (no border/background) — only the "仅变体" filter button surfaces them. Visual highlighting remains dup-only to avoid one row carrying two highlight schemes. Variant filtering composes with search + dup + single/multi filters in `filterTable()`.
+- `apply_all.js` Step 5 is check-only (like Step 3): detects `data-variant-group` presence, does not inject logic. Variant detection lives in `livery_analyzer.js` source.
+
 ## Key Technical Details
 
 - **⚠️ 游戏文件只读原则**：绝对禁止直接操作游戏安装目录下的任何文件（`E:\Application\steamapps\common\ForzaHorizon6\` 及其子目录）。当需要检查或解析游戏文件时，必须先将目标文件复制到项目目录（如 `tmp_strings/` 或项目根目录），再对副本进行操作。这包括但不限于：读取、解析、解压、修改游戏文件。唯一例外是 `Data_Car.str`（已存在于项目根目录）。
