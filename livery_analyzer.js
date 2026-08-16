@@ -57,19 +57,20 @@ function isTextUnit(u) {
 }
 
 /**
- * 解析 header 文件 → { title, desc, author }
+ * 解析 header 文件 → { title, desc, author, guid }
  * header 是 Forza 二进制容器：标题/描述以「u32 长度 + UTF-16LE」紧随文件头存储，
  * 作者串位于后续二进制区（u16=9 锚点 + u32 长度 + 一段可显示文本）。
  * 相比旧版"仅扫描 ASCII 段"的做法，可正确还原中文/日文等多字节标题与描述。
+ * guid 为文件末尾 16 字节（游戏分配的设计 ID），用于重复检测。
  */
 function parseHeader(headerPath) {
     try {
         const h = fs.readFileSync(headerPath);
-        if (h.length < 8) return { title: '', desc: '', author: '' };
+        if (h.length < 8) return { title: '', desc: '', author: '', guid: '' };
         // 标题：文件头偏移 4 处为 u32 长度前缀
         const titleLen = h.readUInt32LE(4);
         if (titleLen > 200 || 8 + titleLen * 2 > h.length) {
-            return { title: '', desc: '', author: '' };
+            return { title: '', desc: '', author: '', guid: '' };
         }
         const title = readUTF16(h, 8, titleLen);
         // 描述：紧跟标题的 u32 长度前缀（可为 0，表示无描述）
@@ -94,8 +95,10 @@ function parseHeader(headerPath) {
             }
             if (ok) { author = readUTF16(h, i + 6, len); break; }
         }
-        return { title, desc, author };
-    } catch { return { title: '', desc: '', author: '' }; }
+        // header 末尾 16 字节 = 游戏分配的设计 GUID（128-bit 设计 ID，用于重复检测）
+        const guid = h.length >= 16 ? h.slice(h.length - 16).toString('hex') : '';
+        return { title, desc, author, guid };
+    } catch { return { title: '', desc: '', author: '', guid: '' }; }
 }
 
 /** 解析目录名 */
@@ -852,12 +855,13 @@ items.forEach(item => {
     const files = fs.readdirSync(fullPath);
     const hasHeader = files.includes('header');
 
-    let title = '', desc = '', author = '';
+    let title = '', desc = '', author = '', guid = '';
     if (hasHeader) {
         const ph = parseHeader(path.join(fullPath, 'header'));
         title = ph.title;
         desc = ph.desc;
         author = ph.author;
+        guid = ph.guid;
     }
 
     liveryItems.push({
@@ -867,29 +871,17 @@ items.forEach(item => {
         title,
         desc,
         author,
+        guid,
         hasThumb: files.includes('bigThumb.webp') || files.includes('thumb.webp')
     });
 });
 
 // ===== 重复涂装检测 =====
-// 双路径并行，最终取并集：
-//   路径 A（缩略图）：同车型缩略图大小固定锚点聚类（0.5%容差）→ 组内 title||desc||author 拆分
-//   路径 B（文本）  ：同车型 + 同作者 → 桶内标题/描述匹配
-//     匹配规则：标题必须相同；若双方描述均非空则描述也须相同；
-//     任意一方描述为空时仅标题匹配即可判定为重复。
+// 同 GUID = 同设计 = 重复。GUID 是游戏分配的设计 ID（header 末尾 16 字节），
+// 精确无歧义：同设计必同 GUID，不同设计必不同 GUID（即使标题/作者/缩略图巧合相同）。
 
-// 提取缩略图大小和标题
+// 清洗标题/描述/作者（服务于显示与变体检测）
 liveryItems.forEach(d => {
-	let thumbSize = 0;
-	try {
-		const bigPath = path.join(d.fullPath, 'bigThumb.webp');
-		if (fs.existsSync(bigPath)) thumbSize = fs.statSync(bigPath).size;
-		else {
-			const smallPath = path.join(d.fullPath, 'thumb.webp');
-			if (fs.existsSync(smallPath)) thumbSize = fs.statSync(smallPath).size;
-		}
-	} catch {}
-	d._thumbSize = thumbSize;
 	// 标题/描述/作者已在扫描阶段精确解析（支持中文等多字节字符）
 	// 标题原样显示：游戏默认标题 "Forza Livery"（未起名）也保留
 	const isSentinel = s => s === 'Forza BaseLivery' || s === 'Forza Livery' || s === 'Forza SoulBoundLivery';
@@ -914,123 +906,15 @@ function normalizeVersion(title) {
 		.trim();
 }
 
-// 固定锚点聚类：同车型内按缩略图大小排序，以最小文件为锚点，
-// 收集所有在 0.5% 容差内的项为一组，移除已分组项后重复。
-// 相比滑窗相邻比较，避免了 A-B-C-D-E 链式串组的问题。
-function clusterByThumbSize(items, tolerance) {
-	const byCode = new Map();
-	items.forEach(d => {
-		if (!byCode.has(d.parsed.code)) byCode.set(d.parsed.code, []);
-		byCode.get(d.parsed.code).push(d);
-	});
-	const groups = [];
-	byCode.forEach((list, code) => {
-		if (list.length < 2) return;
-		list.sort((a, b) => a._thumbSize - b._thumbSize);
-		const used = new Set();
-		for (let i = 0; i < list.length; i++) {
-			if (used.has(i)) continue;
-			const cluster = [list[i]];
-			used.add(i);
-			const anchorSize = list[i]._thumbSize;
-			for (let j = i + 1; j < list.length; j++) {
-				if (used.has(j)) continue;
-				const diff = Math.abs(list[j]._thumbSize - anchorSize);
-				const maxDiff = Math.max(list[j]._thumbSize, anchorSize) * tolerance;
-				if (diff <= maxDiff) {
-					cluster.push(list[j]);
-					used.add(j);
-				}
-			}
-			if (cluster.length >= 2) groups.push(cluster);
-		}
-	});
-	return groups;
-}
-
-// ===== 路径 A：缩略图检测 =====
-// Step A1: 缩略图固定锚点聚类 → 候选组
-const candidateGroups = clusterByThumbSize(
-	liveryItems.filter(d => d._thumbSize > 0),
-	0.005  // 0.5% 容差: ~100KB 缩略图允许 +-512 bytes
-);
-
-// Step A2: 组内按 title||desc||author 二次分组，拆开不同文本的涂装
-const thumbDupGroups = [];
-candidateGroups.forEach(group => {
-	const keyMap = new Map();
-	group.forEach(d => {
-		const key = `${d._title}||${d._desc}||${d._author}`;
-		if (!keyMap.has(key)) keyMap.set(key, []);
-		keyMap.get(key).push(d);
-	});
-	keyMap.forEach(subGroup => {
-		if (subGroup.length >= 2) thumbDupGroups.push(subGroup);
-	});
-});
-
-// ===== 路径 B：文本检测（同车型 + 同作者 + 标题/描述匹配）=====
-// 桶内匹配规则：标题必须相同；若双方描述均非空则描述也须相同；
-// 任意一方描述为空时仅标题匹配即可判定为重复。
-const textBuckets = new Map();
+// GUID 分组：同 GUID 归一组，组内 ≥2 项即重复
+const guidMap = new Map();
 liveryItems.forEach(d => {
-	if (!d._author) return;
-	const key = d.parsed.code + '|||' + d._author;
-	if (!textBuckets.has(key)) textBuckets.set(key, []);
-	textBuckets.get(key).push(d);
+	if (!d.guid) return;
+	if (!guidMap.has(d.guid)) guidMap.set(d.guid, []);
+	guidMap.get(d.guid).push(d);
 });
 
-const textDupGroups = [];
-textBuckets.forEach(bucket => {
-	if (bucket.length < 2) return;
-	const bn = bucket.length;
-	const bParent = Array.from({length: bn}, (_, i) => i);
-	const bFind = x => { while (bParent[x] !== x) { bParent[x] = bParent[bParent[x]]; x = bParent[x]; } return x; };
-	const bUnion = (x, y) => { bParent[bFind(x)] = bFind(y); };
-
-	for (let i = 0; i < bn; i++) {
-		for (let j = i + 1; j < bn; j++) {
-			const a = bucket[i], b = bucket[j];
-			if (a._title !== b._title) continue;
-			const aNoDesc = !a._desc, bNoDesc = !b._desc;
-			if (aNoDesc || bNoDesc || a._desc === b._desc) bUnion(i, j);
-		}
-	}
-
-	const rootMap = new Map();
-	bucket.forEach((d, i) => {
-		const r = bFind(i);
-		if (!rootMap.has(r)) rootMap.set(r, []);
-		rootMap.get(r).push(d);
-	});
-	rootMap.forEach(group => {
-		if (group.length >= 2) textDupGroups.push(group);
-	});
-});
-
-// ===== 合并两条路径（并查集取并集）=====
-const nAll = liveryItems.length;
-const mParent = Array.from({length: nAll}, (_, i) => i);
-const mFind = x => { while (mParent[x] !== x) { mParent[x] = mParent[mParent[x]]; x = mParent[x]; } return x; };
-const mUnion = (x, y) => { mParent[mFind(x)] = mFind(y); };
-
-thumbDupGroups.forEach(group => {
-	for (let i = 1; i < group.length; i++) mUnion(liveryItems.indexOf(group[0]), liveryItems.indexOf(group[i]));
-});
-textDupGroups.forEach(group => {
-	for (let i = 1; i < group.length; i++) mUnion(liveryItems.indexOf(group[0]), liveryItems.indexOf(group[i]));
-});
-
-const finalRootMap = new Map();
-liveryItems.forEach((d, i) => {
-	const r = mFind(i);
-	if (!finalRootMap.has(r)) finalRootMap.set(r, []);
-	finalRootMap.get(r).push(d);
-});
-const dupGroups = [];
-finalRootMap.forEach(group => {
-	if (group.length >= 2) dupGroups.push(group);
-});
+const dupGroups = [...guidMap.values()].filter(g => g.length >= 2);
 
 // 标记每个涂装所属重复组（1-based，0=无重复）
 const dupGroupIdx = new Map();
@@ -1084,7 +968,7 @@ const variantFileCount = variantGroups.reduce((s, g) => s + g.length, 0);
 console.log(`版本变体: ${variantGroups.length} 组变体, 涉及 ${variantFileCount} 个涂装文件`);
 
 const dupFileCount = dupGroups.reduce((s, g) => s + g.length, 0);
-console.log(`重复检测: ${dupGroups.length} 组重复, 涉及 ${dupFileCount} 个涂装文件 (缩略图 ${thumbDupGroups.length} 组 + 文本 ${textDupGroups.length} 组)`);
+console.log(`重复检测: ${dupGroups.length} 组重复, 涉及 ${dupFileCount} 个涂装文件`);
 
 // 计算每车型唯一涂装数（重复组算1种）
 const carUniqueSets = new Map();
