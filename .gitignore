@@ -10,6 +10,10 @@ node/
 .claude/
 memory/
 
+# 逆向工程工作区（本地残留，不入库）
+tmp_agents/
+tmp_crypto/
+
 # Node modules (不推荐用npm，但万一)
 node_modules/
 
