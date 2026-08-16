@@ -46,27 +46,17 @@ ForzaLiveryReport/
 
 ## Duplicate Detection Algorithm
 
-**Dual-path parallel detection, results merged via union-find (union).**
+**GUID-based. Single criterion: same design GUID = duplicate.**
+
+The `header` file's last 16 bytes are the game-assigned design GUID (128-bit design ID). `parseHeader()` returns it as `guid`; the scan phase stores it as `d.guid` on each livery item.
 
 ```
-Path A (thumbnail): carCode + thumbnailFileSize (0.5% tolerance, fixed-anchor clustering)
-                    → in-group split by "title||desc||author" → dup groups
-
-Path B (text):      carCode + author → bucket
-                    → bucket内 title must match; if both have desc then desc must also match;
-                      if either desc is empty, title alone suffices → dup groups
-
-Merge:              union-find over all items, connecting items within each group from both paths
-                    → connected components with ≥2 items = final dup groups
+Group by d.guid → groups with ≥2 items = duplicate groups
 ```
 
-Key details:
-- **Path A Stage 1 — Fixed-anchor clustering**: Group by car code → sort by thumbnail size → pick smallest unassigned as anchor → collect all within 0.5% of anchor → remove assigned → repeat. Prevents chain amplification.
-- **Path A Stage 2 — Text splitting**: Within each thumbnail candidate group, sub-group by `"${title}||${desc}||${author}"`. Only sub-groups ≥2 items.
-- **Path B text match**: Title must match. If both have descriptions, descriptions must also match. If either description is empty, title alone suffices (description is optional metadata).
-- Items without thumbnails (`_thumbSize === 0`) are excluded from Path A but can still be caught by Path B.
-- Author IS in the split key (Path A) and is the bucket key (Path B): different players downloading the same popular livery should NOT be merged.
-- Items with all-empty title + desc + author share key `"||||"` and will match each other in Path A; they're excluded from Path B (empty author).
+- Same GUID = same design = duplicate (exact, unambiguous). Different designs always have different GUIDs, even if title/author/thumbnail coincidentally match.
+- The old dual-path heuristic (thumbnail-size clustering + text matching + union-find) was removed in v1.5 — GUID replaces it entirely.
+- Items with missing header or header <16 bytes have empty `guid` and are excluded from duplicate detection (defensive; empirically 100% coverage).
 - Final groups assigned 1-based IDs via `_dupGroup`; non-duplicates get ID 0.
 
 ## Version Variant Detection Algorithm
