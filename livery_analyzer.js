@@ -899,6 +899,21 @@ liveryItems.forEach(d => {
 	d._desc = (isSentinel(d.desc) || d.desc === d.title || d.desc === d.author) ? '' : d.desc;
 });
 
+/**
+ * 剥离标题中的版本号 token，返回「基础标题」。
+ * 识别范围：v/V/ver/ver./version/final/FINAL/rev + 数字；小数版本 \d+\.\d+
+ * 不认结尾裸数字（误判风险高）。
+ */
+function normalizeVersion(title) {
+	if (!title) return '';
+	return title
+		.replace(/(?:v|ver\.?|version)\s?\.?\d+/gi, '')   // v2 / V2 / ver2 / version2 / V.3
+		.replace(/(?:final|rev)\s?\d+/gi, '')               // final2 / FINAL2 / rev1
+		.replace(/\d+\.\d+/g, '')                            // 3.0 / 2.0 / 1.5
+		.replace(/\s+/g, ' ')                                // 塌缩多空格（移除后可能留下多余空格）
+		.trim();
+}
+
 // 固定锚点聚类：同车型内按缩略图大小排序，以最小文件为锚点，
 // 收集所有在 0.5% 容差内的项为一组，移除已分组项后重复。
 // 相比滑窗相邻比较，避免了 A-B-C-D-E 链式串组的问题。
@@ -1026,6 +1041,48 @@ liveryItems.forEach(d => {
 	d._dupGroup = dupGroupIdx.get(d) || 0;
 });
 
+// ===== 版本变体检测（与重复检测并行、独立标记）=====
+// 同车型 + 同作者 → 桶；桶内按去版本号后的基础标题二次分组；
+// 子组 ≥2 项 且 原始标题至少有 2 种不同值 → 变体组。
+// 与重复检测互不交叉：一个涂装可同时属于重复组和变体组。
+const variantBuckets = new Map();
+liveryItems.forEach(d => {
+	if (!d._author) return;                       // 变体须有作者
+	const key = d.parsed.code + '|' + d._author;
+	if (!variantBuckets.has(key)) variantBuckets.set(key, []);
+	variantBuckets.get(key).push(d);
+});
+
+const variantGroups = [];
+variantBuckets.forEach(bucket => {
+	if (bucket.length < 2) return;
+	const baseMap = new Map();                     // baseTitle -> [items]
+	bucket.forEach(d => {
+		const base = normalizeVersion(d._title);
+		if (!baseMap.has(base)) baseMap.set(base, []);
+		baseMap.get(base).push(d);
+	});
+	baseMap.forEach(subGroup => {
+		if (subGroup.length < 2) return;
+		// 排除严格重复：原始标题须至少有 2 种不同值
+		const distinctTitles = new Set(subGroup.map(d => d._title));
+		if (distinctTitles.size < 2) return;
+		variantGroups.push(subGroup);
+	});
+});
+
+// 标记每个涂装所属变体组（1-based，0=无变体）
+const variantGroupIdx = new Map();
+variantGroups.forEach((group, idx) => {
+	group.forEach(d => variantGroupIdx.set(d, idx + 1));
+});
+liveryItems.forEach(d => {
+	d._variantGroup = variantGroupIdx.get(d) || 0;
+});
+
+const variantFileCount = variantGroups.reduce((s, g) => s + g.length, 0);
+console.log(`版本变体: ${variantGroups.length} 组变体, 涉及 ${variantFileCount} 个涂装文件`);
+
 const dupFileCount = dupGroups.reduce((s, g) => s + g.length, 0);
 console.log(`重复检测: ${dupGroups.length} 组重复, 涉及 ${dupFileCount} 个涂装文件 (缩略图 ${thumbDupGroups.length} 组 + 文本 ${textDupGroups.length} 组)`);
 
@@ -1075,7 +1132,7 @@ liveryItems.forEach(d => {
         thumbCell = `<div class="no-thumb">无</div>`;
     }
 
-    rowsHtml += `<tr class="${d._dupGroup > 0 ? 'dup-row dup-group-' + d._dupGroup : ''}" data-dup-group="${d._dupGroup}" data-car-unique="${carUniqueSets.get(d.parsed.code).size}" data-sort-default="${curIdx}" data-sort-date="${escapeHtml(p.ts)}" data-sort-car="${escapeHtml(carName)}" data-sort-author="${escapeHtml(cleanAuthor)}">
+    rowsHtml += `<tr class="${d._dupGroup > 0 ? 'dup-row dup-group-' + d._dupGroup : ''}" data-dup-group="${d._dupGroup}" data-car-unique="${carUniqueSets.get(d.parsed.code).size}" data-variant-group="${d._variantGroup}" data-sort-default="${curIdx}" data-sort-date="${escapeHtml(p.ts)}" data-sort-car="${escapeHtml(carName)}" data-sort-author="${escapeHtml(cleanAuthor)}">
         <td class="col-date">${escapeHtml(formatTimestamp(p.ts))}</td>
         <td class="col-grid">${Math.floor(curIdx / 2) + 1}列${(curIdx % 2) + 1}个</td>
         <td class="col-car">${escapeHtml(carName)}</td>
@@ -1230,7 +1287,7 @@ tr:hover { background: #e3f0fa; }
 
 <h1>Forza Horizon 6 涂装分析报告</h1>
 
-<div class="stats-bar">共计 <strong>${liveryItems.length}</strong> 个涂装${dupGroups.length > 0 ? `，其中 <strong style="color:#e65100;">${dupGroups.length}</strong> 组重复（<strong>${dupFileCount}</strong> 个文件）` : ''}</div>
+<div class="stats-bar">共计 <strong>${liveryItems.length}</strong> 个涂装${dupGroups.length > 0 ? `，其中 <strong style="color:#e65100;">${dupGroups.length}</strong> 组重复（<strong>${dupFileCount}</strong> 个文件）` : ''}${variantGroups.length > 0 ? `，其中 <strong style="color:#7b1fa2;">${variantGroups.length}</strong> 组版本变体（<strong>${variantFileCount}</strong> 个文件）` : ''}</div>
 
 <div class="sort-row">
     <span style="font-size:13px;color:#555;">排序：</span>
@@ -1240,6 +1297,7 @@ tr:hover { background: #e3f0fa; }
     <button id="btn-sort-author" onclick="sortTable(5,'string',this)">作者</button>
     <span style="margin-left:12px;font-size:13px;color:#555;">筛选：</span>
     <button id="btn-dup-filter" onclick="toggleDupFilter(this)">仅重复</button>
+	    <button id="btn-variant-filter" onclick="toggleVariantFilter(this)">仅变体</button>
 	    <button id="btn-single-filter" onclick="toggleSingleFilter(this)">仅单涂装</button>
 	    <button id="btn-multi-filter" onclick="toggleMultiFilter(this)">多涂装</button>
 </div>
@@ -1275,6 +1333,7 @@ ${rowsHtml}
 <script>
 var currentSort = {col: 1, asc: true};
 var dupFilterActive = false;
+var variantFilterActive = false;
 var singleFilterActive = false;
 var multiFilterActive = false;
 
@@ -1343,6 +1402,17 @@ function toggleDupFilter(btn) {
     }
     filterTable();
 }
+function toggleVariantFilter(btn) {
+    variantFilterActive = !variantFilterActive;
+    if (variantFilterActive) {
+        btn.classList.add('active');
+        btn.textContent = '仅变体 ✓';
+    } else {
+        btn.classList.remove('active');
+        btn.textContent = '仅变体';
+    }
+    filterTable();
+}
 function toggleSingleFilter(btn){singleFilterActive=!singleFilterActive;if(singleFilterActive){multiFilterActive=false;var mb=document.getElementById('btn-multi-filter');mb.classList.remove('active');mb.textContent='多涂装';btn.classList.add('active');btn.textContent='仅单涂装 ✓'}else{btn.classList.remove('active');btn.textContent='仅单涂装'}filterTable()}
 function toggleMultiFilter(btn){multiFilterActive=!multiFilterActive;if(multiFilterActive){singleFilterActive=false;var sb=document.getElementById('btn-single-filter');sb.classList.remove('active');sb.textContent='仅单涂装';btn.classList.add('active');btn.textContent='多涂装 ✓'}else{btn.classList.remove('active');btn.textContent='多涂装'}filterTable()}
 function openLightbox(img){var lb=document.getElementById("lightbox");document.getElementById("lightbox-img").src=img.src;lb.classList.add("show")}function copyPath(el){var p=el.getAttribute("data-path");navigator.clipboard.writeText(p).then(function(){var t=document.getElementById("toast");t.textContent="Path copied: "+p;t.classList.add("show");setTimeout(function(){t.classList.remove("show")},2500)}).catch(function(){window.open("file:///"+p.replace(/#/g,"%23"))})}function filterTable() {
@@ -1356,8 +1426,9 @@ function openLightbox(img){var lb=document.getElementById("lightbox");document.g
         var author = tr[i].cells[5].textContent.toLowerCase();
         var matchesSearch = car.indexOf(filter) > -1 || title.indexOf(filter) > -1 || author.indexOf(filter) > -1;
         var isDup = tr[i].getAttribute('data-dup-group') !== '0';
+        var isVariant = tr[i].getAttribute('data-variant-group') !== '0';
         var uniqueCount = parseInt(tr[i].getAttribute('data-car-unique')) || 0;
-        if (matchesSearch && (!dupFilterActive || isDup) && (!singleFilterActive || uniqueCount === 1) && (!multiFilterActive || uniqueCount > 1)) {
+        if (matchesSearch && (!dupFilterActive || isDup) && (!variantFilterActive || isVariant) && (!singleFilterActive || uniqueCount === 1) && (!multiFilterActive || uniqueCount > 1)) {
             tr[i].classList.remove('hidden-row');
         } else {
             tr[i].classList.add('hidden-row');
